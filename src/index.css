@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+@theme {
+  /* ExamShield design tokens */
+  --color-navy-950: #060f24;
+  --color-navy-900: #0a1f44;
+  --color-navy-800: #102a56;
+  --color-navy-700: #1a3a6e;
+  --color-royal-600: #1e47e6;
+  --color-royal-500: #2d5bff;
+  --color-royal-400: #5c7fff;
+  --color-royal-100: #e3e9ff;
+  --color-alert-600: #c5373d;
+  --color-alert-500: #e5484d;
+  --color-alert-100: #fde8e9;
+  --color-verified-600: #258a5a;
+  --color-verified-500: #30a46c;
+  --color-verified-100: #e2f5ec;
+  --color-pending-500: #f5a623;
+  --color-pending-100: #fdf0da;
+  --font-display: "Georgia", "Times New Roman", serif;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}
+
+/* WCAG 2.1: visible keyboard focus everywhere */
+:focus-visible {
+  outline: 2px solid var(--color-royal-500);
+  outline-offset: 2px;
+}
+
+.skip-link {
+  @apply absolute -top-12 left-2 z-50 rounded-md bg-royal-600 px-3 py-2 text-sm font-semibold text-white transition-all;
+}
+.skip-link:focus {
+  @apply top-2;
+}
