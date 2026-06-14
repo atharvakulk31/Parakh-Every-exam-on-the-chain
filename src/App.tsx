@@ -9,6 +9,8 @@ import { Centers } from "./pages/Centers";
 import { Proctoring } from "./pages/Proctoring";
 import { Verification } from "./pages/Verification";
 import { Evaluation } from "./pages/Evaluation";
+import { ExamPage } from "./pages/ExamPage";
+import { StudentResults } from "./pages/StudentResults";
 
 export default function App() {
   return (
@@ -72,10 +74,26 @@ export default function App() {
               }
             />
             <Route
+              path="/exam"
+              element={
+                <RequireRole roles={["student"]}>
+                  <ExamPage />
+                </RequireRole>
+              }
+            />
+            <Route
               path="/verification"
               element={
                 <RequireRole roles={["student", "teacher", "admin"]}>
                   <Verification />
+                </RequireRole>
+              }
+            />
+            <Route
+              path="/results"
+              element={
+                <RequireRole roles={["student"]}>
+                  <StudentResults />
                 </RequireRole>
               }
             />

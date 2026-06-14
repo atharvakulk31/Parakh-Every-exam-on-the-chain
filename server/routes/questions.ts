@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { questions, addQuestion, approveQuestion } from "../store.js";
+import { questions, addQuestion, approveQuestion, deleteQuestion, type Question } from "../store.js";
 import { decrypt, appendBlock, sha256 } from "../crypto.js";
 import { requireAuth, type AuthedRequest } from "../auth.js";
 
@@ -36,11 +36,21 @@ questionsRouter.get("/", requireAuth("teacher", "admin"), (req, res) => {
 });
 
 questionsRouter.post("/", requireAuth("teacher", "admin"), (req: AuthedRequest, res) => {
-  const { subject, text, marks, difficulty, topic, language } = req.body ?? {};
+  const { subject, text, marks, difficulty, topic, language, options, correctAnswer, autoApprove } = req.body ?? {};
   if (!subject || !text || typeof marks !== "number" || !["easy", "medium", "hard"].includes(difficulty)) {
     return res.status(400).json({ error: "subject, text, marks (number), difficulty (easy|medium|hard) required" });
   }
-  const q = addQuestion({ subject, text, marks, difficulty, topic, language, createdBy: req.user!.id });
+  // Validate MCQ fields if provided
+  if (options !== undefined) {
+    if (!Array.isArray(options) || options.length !== 4 || options.some((o: unknown) => typeof o !== "string" || !o.trim())) {
+      return res.status(400).json({ error: "MCQ requires exactly 4 non-empty options" });
+    }
+    if (typeof correctAnswer !== "number" || correctAnswer < 0 || correctAnswer > 3) {
+      return res.status(400).json({ error: "correctAnswer must be 0–3" });
+    }
+  }
+  const q = addQuestion({ subject, text, marks, difficulty, topic, language, createdBy: req.user!.id, options, correctAnswer });
+  if (autoApprove) approveQuestion(q.id);
   appendBlock("question_submitted", {
     questionId: q.id,
     subject: q.subject,
@@ -59,6 +69,53 @@ questionsRouter.post("/", requireAuth("teacher", "admin"), (req: AuthedRequest, 
     createdAt: q.createdAt,
     encrypted: true,
   });
+});
+
+// POST /api/questions/bulk — bulk import MCQ questions (CSV parsed client-side, sent as JSON array)
+questionsRouter.post("/bulk", requireAuth("teacher", "admin"), (req: AuthedRequest, res) => {
+  const { questions: rows, autoApprove } = req.body ?? {};
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return res.status(400).json({ error: "questions array required" });
+  }
+  const added: string[] = [];
+  const errors: string[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] as Partial<Question & { text: string; autoApprove?: boolean }>;
+    const { subject, text, marks, difficulty, topic, options, correctAnswer } = r;
+    if (!subject || !text || typeof marks !== "number" || !["easy", "medium", "hard"].includes(difficulty ?? "")) {
+      errors.push(`Row ${i + 1}: missing subject/text/marks/difficulty`);
+      continue;
+    }
+    if (options && (options.length !== 4 || options.some((o) => typeof o !== "string" || !o.trim()))) {
+      errors.push(`Row ${i + 1}: MCQ requires exactly 4 non-empty options`);
+      continue;
+    }
+    const q = addQuestion({
+      subject, text, marks: Number(marks), difficulty: difficulty as Question["difficulty"],
+      topic: topic || subject, language: "English",
+      createdBy: req.user!.id,
+      options: options ?? undefined,
+      correctAnswer: correctAnswer != null ? correctAnswer : undefined,
+    });
+    if (autoApprove) approveQuestion(q.id);
+    added.push(q.id);
+  }
+  res.json({ added: added.length, ids: added, errors });
+});
+
+// DELETE /api/questions/:id — teachers can delete only their own PENDING questions
+questionsRouter.delete("/:id", requireAuth("teacher", "admin"), (req: AuthedRequest, res) => {
+  const q = questions.find((x) => x.id === req.params.id);
+  if (!q) return res.status(404).json({ error: "Question not found" });
+  if (q.createdBy !== req.user!.id && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Cannot delete another teacher's question" });
+  }
+  if (q.status === "approved" && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Approved questions can only be deleted by admin" });
+  }
+  deleteQuestion(q.id);
+  appendBlock("question_deleted", { questionId: q.id, deletedBy: req.user!.id });
+  res.json({ deleted: q.id });
 });
 
 questionsRouter.patch("/:id/approve", requireAuth("teacher", "admin"), (req: AuthedRequest, res) => {

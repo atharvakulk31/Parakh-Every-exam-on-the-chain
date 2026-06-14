@@ -17,7 +17,7 @@ const activeSessions = new Map<string, string>(); // userId -> sid
 export const revokedFamilies = new Set<string>();
 
 const JWT_SECRET = process.env.JWT_SECRET || "parakh-dev-secret";
-const ACCESS_TTL = "15m";
+const ACCESS_TTL = "4h";
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_FAILS = 5;
 const LOCK_MS = 15 * 60 * 1000;
@@ -95,7 +95,8 @@ authRouter.post("/refresh", (req: Request, res: Response) => {
     return res.status(401).json({ error: "Refresh token expired or revoked" });
   }
 
-  if (activeSessions.get(record.userId) !== record.sid) {
+  const currentSid = activeSessions.get(record.userId);
+  if (currentSid !== undefined && currentSid !== record.sid) {
     deleteRefreshToken(refreshToken as string);
     return res.status(401).json({ error: "Session superseded by a newer sign-in" });
   }

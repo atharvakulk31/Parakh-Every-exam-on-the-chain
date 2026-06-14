@@ -65,7 +65,11 @@ export async function api<T = unknown>(path: string, init: RequestInit = {}): Pr
   }
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? `Request failed (${res.status})`);
+    const e = Object.assign(
+      new Error((body as { error?: string }).error ?? `Request failed (${res.status})`),
+      { status: res.status, body },
+    );
+    throw e;
   }
   return body as T;
 }

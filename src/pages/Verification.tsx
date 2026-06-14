@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { useSearchParams } from "react-router-dom";
 import { ShieldCheck, ShieldAlert, Search, Wrench, Undo2 } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -19,14 +20,27 @@ interface ChainStatus {
 
 export function Verification() {
   const { user } = useAuth();
-  const [roll, setRoll] = useState("");
+  const [searchParams] = useSearchParams();
+  const [roll, setRoll] = useState(searchParams.get("roll")?.toUpperCase() ?? "");
   const [result, setResult] = useState<VerifyResult | null>(null);
   const [chain, setChain] = useState<ChainStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const loadChain = () => api<ChainStatus>("/api/verify").then(setChain).catch(() => {});
-  useEffect(() => { loadChain(); }, []);
+
+  // Auto-lookup if roll came from QR scan URL param
+  useEffect(() => {
+    loadChain();
+    const qrRoll = searchParams.get("roll");
+    if (qrRoll) {
+      const r = qrRoll.toUpperCase().trim();
+      setRoll(r);
+      api<VerifyResult>("/api/verify", { method: "POST", body: JSON.stringify({ rollNumber: r }) })
+        .then(setResult)
+        .catch(() => {});
+    }
+  }, []);
 
   async function lookup(e: FormEvent) {
     e.preventDefault();

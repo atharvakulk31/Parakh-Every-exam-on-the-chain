@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from "react-router-dom";
-import { Lock } from "lucide-react";
+import { Lock, ClipboardList, Trophy } from "lucide-react";
 import { useAuth } from "../lib/auth";
 
 // The 6-stage exam lifecycle — always visible, self-narrating for demo judges.
@@ -29,6 +29,30 @@ export function Sidebar() {
       </div>
 
       <nav aria-label="Exam lifecycle navigation" className="flex-1 overflow-y-auto px-3 py-4">
+        {user?.role === "student" && (
+          <>
+            <NavLink
+              to="/exam"
+              className={({ isActive }) =>
+                `mb-1 flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium ${
+                  isActive ? "bg-royal-500 text-white" : "text-slate-300 hover:bg-navy-800"
+                }`
+              }
+            >
+              <ClipboardList size={15} /> My Exam
+            </NavLink>
+            <NavLink
+              to="/results"
+              className={({ isActive }) =>
+                `mb-2 flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium ${
+                  isActive ? "bg-royal-500 text-white" : "text-slate-300 hover:bg-navy-800"
+                }`
+              }
+            >
+              <Trophy size={15} /> My Results
+            </NavLink>
+          </>
+        )}
         {user?.role !== "student" && (
           <NavLink
             to="/dashboard"
@@ -48,9 +72,10 @@ export function Sidebar() {
         <ol className="relative">
           {LIFECYCLE.map((s, i) => {
             const allowed = user ? (s.roles as readonly string[]).includes(user.role) : false;
+            // Students only see stages they can access — no locked placeholders
+            if (!allowed) return null;
             const isActive = i === activeIdx;
-            // ✓ only for stages this role can actually reach and has passed
-            const isDone = allowed && activeIdx >= 0 && i < activeIdx;
+            const isDone = activeIdx >= 0 && i < activeIdx;
             return (
               <li key={s.stage} className="relative">
                 {i < LIFECYCLE.length - 1 && (
@@ -60,42 +85,29 @@ export function Sidebar() {
                     }`}
                   />
                 )}
-                {allowed ? (
-                  <NavLink
-                    to={s.path}
-                    aria-current={isActive ? "page" : undefined}
-                    aria-label={`Stage ${s.stage}: ${s.label}`}
-                    className={`relative z-10 mb-1 flex items-center gap-3 rounded-md px-3 py-2 text-sm ${
+                <NavLink
+                  to={s.path}
+                  aria-current={isActive ? "page" : undefined}
+                  aria-label={`Stage ${s.stage}: ${s.label}`}
+                  className={`relative z-10 mb-1 flex items-center gap-3 rounded-md px-3 py-2 text-sm ${
+                    isActive
+                      ? "bg-royal-500 font-semibold text-white"
+                      : "text-slate-300 hover:bg-navy-800"
+                  }`}
+                >
+                  <span
+                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
                       isActive
-                        ? "bg-royal-500 font-semibold text-white"
-                        : "text-slate-300 hover:bg-navy-800"
+                        ? "bg-white text-royal-600"
+                        : isDone
+                          ? "bg-verified-500 text-white"
+                          : "bg-navy-700 text-slate-400"
                     }`}
                   >
-                    <span
-                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
-                        isActive
-                          ? "bg-white text-royal-600"
-                          : isDone
-                            ? "bg-verified-500 text-white"
-                            : "bg-navy-700 text-slate-400"
-                      }`}
-                    >
-                      {isDone ? "✓" : s.stage}
-                    </span>
-                    {s.label}
-                  </NavLink>
-                ) : (
-                  <span
-                    aria-label={`Stage ${s.stage}: ${s.label} (restricted for your role)`}
-                    title="Restricted for your role"
-                    className="relative z-10 mb-1 flex cursor-not-allowed items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600"
-                  >
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-800 text-slate-500">
-                      <Lock size={10} />
-                    </span>
-                    {s.label}
+                    {isDone ? "✓" : s.stage}
                   </span>
-                )}
+                  {s.label}
+                </NavLink>
               </li>
             );
           })}

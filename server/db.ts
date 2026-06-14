@@ -113,4 +113,33 @@ CREATE TABLE IF NOT EXISTS exam_config (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS exam_submissions (
+  rollNumber TEXT PRIMARY KEY,
+  answers TEXT NOT NULL,
+  score INTEGER NOT NULL DEFAULT -1,
+  total INTEGER NOT NULL DEFAULT 0,
+  submittedAt TEXT NOT NULL,
+  graded INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS answer_keys (
+  questionId TEXT PRIMARY KEY,
+  encryptedAnswer TEXT NOT NULL,
+  createdAt TEXT NOT NULL
+);
 `);
+
+// Safe column migrations — ignored if column already exists
+for (const sql of [
+  "ALTER TABLE exam_submissions ADD COLUMN graded INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE questions ADD COLUMN options TEXT",
+  "ALTER TABLE questions ADD COLUMN correctAnswer INTEGER",
+  "ALTER TABLE questions ADD COLUMN plainText TEXT",
+  "ALTER TABLE papers ADD COLUMN questionIds TEXT",
+  "ALTER TABLE papers ADD COLUMN title TEXT",
+  "ALTER TABLE papers ADD COLUMN paperHash TEXT",
+  "ALTER TABLE papers ADD COLUMN finalizedBy TEXT",
+  "ALTER TABLE papers ADD COLUMN finalizedAt TEXT",
+  "ALTER TABLE papers ADD COLUMN variantQuestionIds TEXT",
+]) {
+  try { db.exec(sql); } catch { /* already exists */ }
+}

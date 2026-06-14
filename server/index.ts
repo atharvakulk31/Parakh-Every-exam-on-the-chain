@@ -13,6 +13,8 @@ import { proctoringRouter } from "./routes/proctoring.js";
 import { securityHeaders, csrfProtect, rateLimit } from "./security.js";
 import { evaluationRouter } from "./routes/evaluation.js";
 import { reportRouter } from "./routes/report.js";
+import { examRouter } from "./routes/exam.js";
+import { paperComposeRouter } from "./routes/paperCompose.js";
 import { seedDemoState } from "./seed.js";
 
 seedDemoState();
@@ -35,6 +37,8 @@ app.use("/api/centers", centersRouter);
 app.use("/api/proctoring", proctoringRouter);
 app.use("/api/evaluation", evaluationRouter);
 app.use("/api/report", reportRouter);
+app.use("/api/exam", examRouter);
+app.use("/api/paper-compose", paperComposeRouter);
 
 app.get("/api/stats", requireAuth("teacher", "admin"), (_req, res) => {
   const blocked = (db.prepare("SELECT COUNT(*) as cnt FROM audit_log WHERE status IN (401, 423)").get() as { cnt: number }).cnt;

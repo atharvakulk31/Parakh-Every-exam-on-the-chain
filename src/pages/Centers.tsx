@@ -14,6 +14,7 @@ interface Center {
 interface CentersResponse {
   centers: Center[];
   examStartAt: number | null;
+  examDuration: number;
   serverNow: number;
   papersAvailable: string[];
 }
@@ -28,7 +29,14 @@ function fmt(ms: number): string {
 export function Centers() {
   const [data, setData] = useState<CentersResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [scheduleMode, setScheduleMode] = useState<"quick" | "datetime">("datetime");
   const [minutes, setMinutes] = useState(2);
+  const [datetime, setDatetime] = useState(() => {
+    // Default to 5 min from now
+    const d = new Date(Date.now() + 5 * 60_000);
+    return d.toISOString().slice(0, 16);
+  });
+  const [durationMinutes, setDurationMinutes] = useState(90);
   const [now, setNow] = useState(Date.now());
   const [decrypting, setDecrypting] = useState(false);
   const clockSkew = useRef(0);
@@ -65,7 +73,10 @@ export function Centers() {
     setError(null);
     try {
       unlockFired.current = false;
-      await api("/api/centers/schedule", { method: "POST", body: JSON.stringify({ minutes }) });
+      const body = scheduleMode === "datetime"
+        ? { datetime, durationMinutes }
+        : { minutes, durationMinutes };
+      await api("/api/centers/schedule", { method: "POST", body: JSON.stringify(body) });
       load();
     } catch (e) { setError(e instanceof Error ? e.message : "Schedule failed"); }
   }
@@ -100,21 +111,55 @@ export function Centers() {
           </div>
         </div>
 
-        <div className="flex flex-col justify-center gap-2 rounded-lg border border-slate-200 bg-white p-4">
-          <div className="flex items-center gap-2">
-            <input type="number" min={0.5} max={180} step={0.5} value={minutes}
-              onChange={(e) => setMinutes(Number(e.target.value))}
-              className="w-20 rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
-            <span className="text-xs text-slate-500">min</span>
-            <button onClick={schedule}
-              className="flex items-center gap-1.5 rounded-md bg-navy-900 px-3 py-2 text-xs font-semibold text-white hover:bg-navy-800">
-              <CalendarClock size={14} /> Schedule T-zero
+        <div className="flex flex-col justify-center gap-3 rounded-lg border border-slate-200 bg-white p-4 min-w-72">
+          {/* Mode tabs */}
+          <div className="flex gap-1 rounded-md border border-slate-200 bg-slate-50 p-0.5 text-xs">
+            <button onClick={() => setScheduleMode("datetime")}
+              className={`flex-1 rounded py-1 font-medium ${scheduleMode === "datetime" ? "bg-white shadow-sm text-navy-900" : "text-slate-500"}`}>
+              Date & Time
+            </button>
+            <button onClick={() => setScheduleMode("quick")}
+              className={`flex-1 rounded py-1 font-medium ${scheduleMode === "quick" ? "bg-white shadow-sm text-navy-900" : "text-slate-500"}`}>
+              Quick (min)
             </button>
           </div>
-          <button onClick={distribute}
-            className="flex items-center justify-center gap-1.5 rounded-md bg-royal-500 px-3 py-2 text-xs font-semibold text-white hover:bg-royal-600">
-            <Truck size={14} /> Distribute latest paper
-          </button>
+
+          {scheduleMode === "datetime" ? (
+            <input type="datetime-local" value={datetime} onChange={(e) => setDatetime(e.target.value)}
+              className="rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
+          ) : (
+            <div className="flex items-center gap-2">
+              <input type="number" min={0.5} max={10080} step={0.5} value={minutes}
+                onChange={(e) => setMinutes(Number(e.target.value))}
+                className="w-20 rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
+              <span className="text-xs text-slate-500">min from now</span>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-slate-500 shrink-0">Duration:</label>
+            <input type="number" min={10} max={240} value={durationMinutes}
+              onChange={(e) => setDurationMinutes(Number(e.target.value))}
+              className="w-16 rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
+            <span className="text-xs text-slate-500">min</span>
+          </div>
+
+          <div className="flex gap-2">
+            <button onClick={schedule}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-md bg-navy-900 px-3 py-2 text-xs font-semibold text-white hover:bg-navy-800">
+              <CalendarClock size={14} /> Schedule T-zero
+            </button>
+            <button onClick={distribute}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-md bg-royal-500 px-3 py-2 text-xs font-semibold text-white hover:bg-royal-600">
+              <Truck size={14} /> Distribute
+            </button>
+          </div>
+
+          {data?.examStartAt && (
+            <div className="text-[10px] text-slate-400 border-t border-slate-100 pt-2">
+              Scheduled: {new Date(data.examStartAt).toLocaleString()} · Duration: {Math.round((data.examDuration ?? 5400000) / 60000)} min
+            </div>
+          )}
         </div>
 
         {decrypting && (

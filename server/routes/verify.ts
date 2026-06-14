@@ -1,9 +1,26 @@
 import { Router } from "express";
+import QRCode from "qrcode";
 import { verifyChain, getChain, sha256, tamperDemo, restoreDemo } from "../crypto.js";
 import { assignments } from "../store.js";
 import { requireAuth } from "../auth.js";
 
 export const verifyRouter = Router();
+
+// GET /api/verify/qr?roll=XXX — public QR code SVG for marksheet scanning
+verifyRouter.get("/qr", async (req, res) => {
+  const roll = String(req.query.roll ?? "").toUpperCase().trim();
+  if (!roll) return res.status(400).json({ error: "roll required" });
+  const base = process.env.PUBLIC_URL ?? "http://localhost:5173";
+  const url = `${base}/verify?roll=${encodeURIComponent(roll)}`;
+  try {
+    const svg = await QRCode.toString(url, { type: "svg", margin: 1, width: 200, color: { dark: "#0f172a", light: "#ffffff" } });
+    res.setHeader("Content-Type", "image/svg+xml");
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.send(svg);
+  } catch {
+    res.status(500).json({ error: "QR generation failed" });
+  }
+});
 
 // Public integrity check — anyone (incl. students) can verify the chain
 verifyRouter.get("/", (_req, res) => {

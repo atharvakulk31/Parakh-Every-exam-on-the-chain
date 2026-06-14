@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { centers, papers, assignments, examConfig, updateCenter, setAssignment, setExamStartAt } from "../store.js";
+import { centers, papers, assignments, examConfig, updateCenter, setAssignment, setExamStartAt, setExamDuration } from "../store.js";
 import { appendBlock, sha256 } from "../crypto.js";
 import { requireAuth, type AuthedRequest } from "../auth.js";
 
@@ -9,16 +9,36 @@ centersRouter.get("/", requireAuth("admin"), (_req, res) => {
   res.json({
     centers,
     examStartAt: examConfig.startAt,
+    examDuration: examConfig.duration,
     serverNow: Date.now(),
     papersAvailable: papers.map((p) => p.paperId),
   });
 });
 
 centersRouter.post("/schedule", requireAuth("admin"), (req: AuthedRequest, res) => {
-  const minutes = Math.min(Math.max(Number(req.body?.minutes) || 2, 0.5), 180);
-  setExamStartAt(Date.now() + minutes * 60_000);
-  appendBlock("exam_scheduled", { startAt: new Date(examConfig.startAt!).toISOString(), scheduledBy: req.user!.id });
-  res.json({ examStartAt: examConfig.startAt, serverNow: Date.now() });
+  const { minutes, datetime, durationMinutes } = req.body ?? {};
+
+  let startAt: number;
+  if (datetime) {
+    startAt = new Date(datetime as string).getTime();
+    if (isNaN(startAt)) return res.status(400).json({ error: "Invalid datetime" });
+  } else {
+    const mins = Math.min(Math.max(Number(minutes) || 2, 0.5), 10080); // max 1 week
+    startAt = Date.now() + mins * 60_000;
+  }
+
+  if (durationMinutes) {
+    const dur = Number(durationMinutes);
+    if (dur >= 10 && dur <= 240) setExamDuration(dur * 60_000);
+  }
+
+  setExamStartAt(startAt);
+  appendBlock("exam_scheduled", {
+    startAt: new Date(examConfig.startAt!).toISOString(),
+    durationMs: examConfig.duration,
+    scheduledBy: req.user!.id,
+  });
+  res.json({ examStartAt: examConfig.startAt, examDuration: examConfig.duration, serverNow: Date.now() });
 });
 
 centersRouter.post("/distribute", requireAuth("admin"), (req: AuthedRequest, res) => {

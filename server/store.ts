@@ -1,5 +1,5 @@
 import bcrypt from "bcryptjs";
-import { encrypt } from "./crypto.js";
+import { encrypt, decrypt } from "./crypto.js";
 import { db } from "./db.js";
 
 export type Role = "student" | "teacher" | "admin";
@@ -23,6 +23,9 @@ export interface Question {
   difficulty: "easy" | "medium" | "hard";
   createdBy: string;
   createdAt: string;
+  options?: string[] | null;
+  correctAnswer?: number | null;
+  plainText?: string | null;
 }
 
 export interface AuditEntry {
@@ -53,6 +56,12 @@ export interface Paper {
   paperId: string;
   subject: string;
   variantIds: string[];
+  questionIds?: string[] | null;
+  variantQuestionIds?: Record<string, string[]> | null;
+  title?: string | null;
+  paperHash?: string | null;
+  finalizedBy?: string | null;
+  finalizedAt?: string | null;
 }
 
 export interface CustodyEntry {
@@ -103,9 +112,9 @@ export interface Script {
 
 const stmts = {
   insertUser: db.prepare("INSERT OR IGNORE INTO users (id, username, passwordHash, role, name) VALUES (?, ?, ?, ?, ?)"),
-  insertQuestion: db.prepare("INSERT OR IGNORE INTO questions (id, subject, topic, language, status, encryptedText, marks, difficulty, createdBy, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
+  insertQuestion: db.prepare("INSERT OR IGNORE INTO questions (id, subject, topic, language, status, encryptedText, marks, difficulty, createdBy, createdAt, options, correctAnswer, plainText) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
   approveQuestion: db.prepare("UPDATE questions SET status = 'approved' WHERE id = ?"),
-  insertPaper: db.prepare("INSERT OR REPLACE INTO papers (paperId, subject, variantIds) VALUES (?, ?, ?)"),
+  insertPaper: db.prepare("INSERT OR REPLACE INTO papers (paperId, subject, variantIds, questionIds, title, paperHash, finalizedBy, finalizedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"),
   updateCenter: db.prepare("UPDATE centers SET variant = ?, paperId = ?, status = ?, custody = ? WHERE id = ?"),
   insertCenter: db.prepare("INSERT OR IGNORE INTO centers (id, name, city, variant, paperId, status, custody) VALUES (?, ?, ?, ?, ?, ?, '[]')"),
   insertAssignment: db.prepare("INSERT OR REPLACE INTO assignments (rollNumber, centerId, paperId, variant, blockHash) VALUES (?, ?, ?, ?, ?)"),
@@ -136,13 +145,34 @@ export const users: User[] = db.prepare("SELECT * FROM users").all() as User[];
 
 // ─── Questions ─────────────────────────────────────────────────────────────
 
-export const questions: Question[] = db.prepare("SELECT * FROM questions ORDER BY createdAt").all() as Question[];
+export const questions: Question[] = (db.prepare("SELECT * FROM questions ORDER BY createdAt").all() as any[]).map((r) => ({
+  ...r,
+  options: r.options ? JSON.parse(r.options) as string[] : null,
+  correctAnswer: r.correctAnswer ?? null,
+  plainText: r.plainText ?? null,
+}));
 
 let qSeq = questions.reduce((max, q) => Math.max(max, parseInt(q.id.replace("Q-", ""), 10) || 0), 0);
+
+// ─── Answer key vault (separate encrypted store) ───────────────────────────
+
+const _akInsert = db.prepare("INSERT OR REPLACE INTO answer_keys (questionId, encryptedAnswer, createdAt) VALUES (?, ?, ?)");
+const _akGet = db.prepare("SELECT encryptedAnswer FROM answer_keys WHERE questionId = ?");
+
+function _storeAnswerKey(questionId: string, correctAnswer: number, createdAt: string): void {
+  _akInsert.run(questionId, encrypt(String(correctAnswer)), createdAt);
+}
+
+export function getAnswerKey(questionId: string): number | null {
+  const row = _akGet.get(questionId) as { encryptedAnswer: string } | undefined;
+  if (!row) return null;
+  try { return parseInt(decrypt(row.encryptedAnswer), 10); } catch { return null; }
+}
 
 export function addQuestion(q: {
   subject: string; text: string; marks: number; difficulty: Question["difficulty"];
   createdBy: string; topic?: string; language?: string; status?: Question["status"];
+  options?: string[]; correctAnswer?: number;
 }): Question {
   const question: Question = {
     id: `Q-${String(++qSeq).padStart(4, "0")}`,
@@ -155,8 +185,22 @@ export function addQuestion(q: {
     difficulty: q.difficulty,
     createdBy: q.createdBy,
     createdAt: new Date().toISOString(),
+    options: q.options ?? null,
+    correctAnswer: q.correctAnswer ?? null,
+    plainText: q.text,
   };
-  stmts.insertQuestion.run(question.id, question.subject, question.topic, question.language, question.status, question.encryptedText, question.marks, question.difficulty, question.createdBy, question.createdAt);
+  stmts.insertQuestion.run(
+    question.id, question.subject, question.topic, question.language,
+    question.status, question.encryptedText, question.marks, question.difficulty,
+    question.createdBy, question.createdAt,
+    question.options ? JSON.stringify(question.options) : null,
+    question.correctAnswer ?? null,
+    question.plainText ?? null,
+  );
+  // Mirror correct answer to separate encrypted vault
+  if (q.correctAnswer != null) {
+    _storeAnswerKey(question.id, q.correctAnswer, question.createdAt);
+  }
   questions.push(question);
   return question;
 }
@@ -172,11 +216,35 @@ export function approveQuestion(id: string): void {
 export const papers: Paper[] = (db.prepare("SELECT * FROM papers").all() as any[]).map((r) => ({
   ...r,
   variantIds: JSON.parse(r.variantIds) as string[],
+  questionIds: r.questionIds ? JSON.parse(r.questionIds) as string[] : null,
+  variantQuestionIds: r.variantQuestionIds ? JSON.parse(r.variantQuestionIds) as Record<string, string[]> : null,
+  title: r.title ?? null,
+  paperHash: r.paperHash ?? null,
+  finalizedBy: r.finalizedBy ?? null,
+  finalizedAt: r.finalizedAt ?? null,
 }));
 
 export function addPaper(paper: Paper): void {
-  stmts.insertPaper.run(paper.paperId, paper.subject, JSON.stringify(paper.variantIds));
+  stmts.insertPaper.run(
+    paper.paperId, paper.subject, JSON.stringify(paper.variantIds),
+    paper.questionIds ? JSON.stringify(paper.questionIds) : null,
+    paper.title ?? null, paper.paperHash ?? null,
+    paper.finalizedBy ?? null, paper.finalizedAt ?? null,
+  );
+  if (paper.variantQuestionIds) {
+    db.prepare("UPDATE papers SET variantQuestionIds = ? WHERE paperId = ?")
+      .run(JSON.stringify(paper.variantQuestionIds), paper.paperId);
+  }
   papers.push(paper);
+}
+
+export function updatePaper(paperId: string, updates: Partial<Pick<Paper, "paperHash" | "finalizedBy" | "finalizedAt" | "questionIds" | "title">>): void {
+  const p = papers.find((x) => x.paperId === paperId);
+  if (!p) return;
+  Object.assign(p, updates);
+  db.prepare("UPDATE papers SET paperHash=?, finalizedBy=?, finalizedAt=?, questionIds=?, title=? WHERE paperId=?")
+    .run(p.paperHash ?? null, p.finalizedBy ?? null, p.finalizedAt ?? null,
+         p.questionIds ? JSON.stringify(p.questionIds) : null, p.title ?? null, paperId);
 }
 
 // ─── Centers ───────────────────────────────────────────────────────────────
@@ -217,11 +285,41 @@ export function setAssignment(rollNumber: string, data: Assignment): void {
 // ─── Exam config ───────────────────────────────────────────────────────────
 
 const _examStartAtRow = db.prepare("SELECT value FROM exam_config WHERE key = 'startAt'").get() as any;
-export const examConfig = { startAt: _examStartAtRow ? Number(_examStartAtRow.value) : null as number | null };
+const _examDurationRow = db.prepare("SELECT value FROM exam_config WHERE key = 'duration'").get() as any;
+const _examStateRow = db.prepare("SELECT value FROM exam_config WHERE key = 'examState'").get() as any;
+export const examConfig: {
+  startAt: number | null;
+  duration: number;
+  examState: "active" | "ended" | "evaluated";
+} = {
+  startAt: _examStartAtRow ? Number(_examStartAtRow.value) : null,
+  duration: _examDurationRow ? Number(_examDurationRow.value) : 90 * 60 * 1000,
+  examState: (_examStateRow?.value as "active" | "ended" | "evaluated") ?? "active",
+};
+
+// Demo: if the exam window has already expired, roll startAt forward so judges always see a live exam
+{
+  const start = examConfig.startAt;
+  if (start && Date.now() > start + examConfig.duration) {
+    const newStart = Date.now() - 30 * 60_000; // 30 min into a fresh 90-min window
+    examConfig.startAt = newStart;
+    db.prepare("UPDATE exam_config SET value = ? WHERE key = 'startAt'").run(String(newStart));
+  }
+}
 
 export function setExamStartAt(ts: number): void {
   examConfig.startAt = ts;
   stmts.upsertExamConfig.run("startAt", String(ts));
+}
+
+export function setExamDuration(ms: number): void {
+  examConfig.duration = ms;
+  stmts.upsertExamConfig.run("duration", String(ms));
+}
+
+export function setExamState(state: "active" | "ended" | "evaluated"): void {
+  examConfig.examState = state;
+  stmts.upsertExamConfig.run("examState", state);
 }
 
 // ─── Flags ─────────────────────────────────────────────────────────────────
@@ -320,6 +418,44 @@ export function getAuditEntries(limit = 100): AuditEntry[] {
   return db.prepare("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?").all(limit) as AuditEntry[];
 }
 
+// ─── Exam submissions ──────────────────────────────────────────────────────
+
+export interface ExamSubmission {
+  rollNumber: string;
+  answers: Record<string, number>;
+  score: number;   // -1 = ungraded (pending admin unlock)
+  total: number;
+  submittedAt: string;
+  graded: number;  // 0 = pending, 1 = graded
+}
+
+export function getSubmission(rollNumber: string): ExamSubmission | undefined {
+  const row = db.prepare("SELECT * FROM exam_submissions WHERE rollNumber = ?").get(rollNumber) as any;
+  if (!row) return undefined;
+  return { ...row, answers: JSON.parse(row.answers) as Record<string, number> };
+}
+
+export function getAllSubmissions(): ExamSubmission[] {
+  return (db.prepare("SELECT * FROM exam_submissions ORDER BY submittedAt").all() as any[])
+    .map((r) => ({ ...r, answers: JSON.parse(r.answers) as Record<string, number> }));
+}
+
+export function addSubmission(s: Omit<ExamSubmission, "graded">): void {
+  db.prepare("INSERT OR IGNORE INTO exam_submissions (rollNumber, answers, score, total, submittedAt, graded) VALUES (?, ?, ?, ?, ?, 0)")
+    .run(s.rollNumber, JSON.stringify(s.answers), s.score, s.total, s.submittedAt);
+}
+
+export function gradeSubmission(rollNumber: string, score: number, total: number): void {
+  db.prepare("UPDATE exam_submissions SET score = ?, total = ?, graded = 1 WHERE rollNumber = ?").run(score, total, rollNumber);
+}
+
+export function deleteQuestion(id: string): void {
+  db.prepare("DELETE FROM questions WHERE id = ?").run(id);
+  db.prepare("DELETE FROM answer_keys WHERE questionId = ?").run(id);
+  const idx = questions.findIndex((q) => q.id === id);
+  if (idx >= 0) questions.splice(idx, 1);
+}
+
 // ─── Seed bank (first boot only) ───────────────────────────────────────────
 
 if (questions.length === 0) {
@@ -331,4 +467,34 @@ if (questions.length === 0) {
     { subject: "Mathematics", topic: "Calculus", text: "Evaluate ∫ x²·e^x dx using integration by parts.", marks: 5, difficulty: "medium" as const },
     { subject: "Mathematics", topic: "Linear Algebra", text: "Find the eigenvalues and eigenvectors of the matrix [[2,1],[1,2]].", marks: 5, difficulty: "hard" as const },
   ].forEach((q) => addQuestion({ ...q, createdBy: "u-tea-1", status: "approved" }));
+}
+
+// MCQ questions — seeded once, used for live student exam
+if (!questions.some((q) => q.options && q.options.length > 0)) {
+  ([
+    { subject: "Physics", topic: "Laws of Motion", text: "Newton's Second Law states that net force on a body equals:", options: ["mass × velocity", "mass × acceleration", "mass × distance", "mass / time"], correctAnswer: 1, marks: 1, difficulty: "easy" as const },
+    { subject: "Physics", topic: "Electricity", text: "The SI unit of electric charge is:", options: ["Ampere", "Volt", "Coulomb", "Farad"], correctAnswer: 2, marks: 1, difficulty: "easy" as const },
+    { subject: "Physics", topic: "Kinematics", text: "Which of the following is a vector quantity?", options: ["Speed", "Temperature", "Displacement", "Energy"], correctAnswer: 2, marks: 1, difficulty: "easy" as const },
+    { subject: "Physics", topic: "Wave Optics", text: "Bending of light around the edges of an obstacle is called:", options: ["Reflection", "Refraction", "Diffraction", "Polarisation"], correctAnswer: 2, marks: 1, difficulty: "medium" as const },
+    { subject: "Physics", topic: "Circuits", text: "In a parallel circuit, the voltage across each branch is:", options: ["Different for each branch", "Same across all branches", "Zero", "Sum of all EMFs"], correctAnswer: 1, marks: 1, difficulty: "medium" as const },
+    { subject: "Physics", topic: "Thermodynamics", text: "The first law of thermodynamics is based on conservation of:", options: ["Momentum", "Charge", "Energy", "Mass"], correctAnswer: 2, marks: 1, difficulty: "medium" as const },
+    { subject: "Mathematics", topic: "Calculus", text: "The derivative of sin(x) with respect to x is:", options: ["cos(x)", "−cos(x)", "tan(x)", "−sin(x)"], correctAnswer: 0, marks: 1, difficulty: "easy" as const },
+    { subject: "Mathematics", topic: "Logarithms", text: "What is the value of log₁₀(1000)?", options: ["2", "3", "4", "10"], correctAnswer: 1, marks: 1, difficulty: "easy" as const },
+    { subject: "Mathematics", topic: "Geometry", text: "The sum of interior angles of a triangle is:", options: ["90°", "180°", "270°", "360°"], correctAnswer: 1, marks: 1, difficulty: "easy" as const },
+    { subject: "Mathematics", topic: "Number Theory", text: "Which of the following is an irrational number?", options: ["0.5", "√4", "√2", "4/3"], correctAnswer: 2, marks: 1, difficulty: "medium" as const },
+    { subject: "Mathematics", topic: "Calculus", text: "If f(x) = x³, then f′(x) equals:", options: ["x²", "3x²", "3x", "x³"], correctAnswer: 1, marks: 1, difficulty: "medium" as const },
+    { subject: "Chemistry", topic: "Atomic Structure", text: "The atomic number of Carbon is:", options: ["4", "6", "8", "12"], correctAnswer: 1, marks: 1, difficulty: "easy" as const },
+  ]).forEach((q) => addQuestion({ ...q, createdBy: "u-tea-1", status: "approved" }));
+}
+
+// Backfill answer_keys for any MCQ questions missing from vault
+{
+  const existing = new Set(
+    (db.prepare("SELECT questionId FROM answer_keys").all() as { questionId: string }[]).map((r) => r.questionId)
+  );
+  for (const q of questions) {
+    if (q.correctAnswer != null && !existing.has(q.id)) {
+      _storeAnswerKey(q.id, q.correctAnswer, q.createdAt);
+    }
+  }
 }

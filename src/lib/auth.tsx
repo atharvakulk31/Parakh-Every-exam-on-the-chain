@@ -40,7 +40,7 @@ export const LOGIN_ROUTE: Record<SessionUser["role"], string> = {
 };
 
 export function homeFor(role: SessionUser["role"]): string {
-  return role === "student" ? "/verification" : "/dashboard";
+  return role === "student" ? "/exam" : "/dashboard";
 }
 
 // Route guard: unauthenticated or wrong-role users are sent to their role's login page.
