@@ -79,6 +79,18 @@ app.get("/api/audit", rateLimit(3, 60_000, "admin-audit"), requireAuth("admin"),
   res.json({ entries: getAuditLog(limit) });
 });
 
+// Serve built frontend in production
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
+import { existsSync } from "fs";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const distPath = join(__dirname, "../dist");
+if (existsSync(distPath)) {
+  app.use(express.static(distPath));
+  app.get("*", (_req, res) => res.sendFile(join(distPath, "index.html")));
+}
+
 const PORT = Number(process.env.PORT) || 4000;
 app.listen(PORT, () => {
   console.log(`Parakh API on http://localhost:${PORT} (Claude: ${process.env.ANTHROPIC_API_KEY ? "live" : "fallback mode"})`);

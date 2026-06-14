@@ -1,3 +1,12 @@
+---
+title: Parakh
+emoji: 🛡️
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+---
+
 <div align="center">
 
 # 🛡️ Parakh — Tamper-Proof Exam Platform
